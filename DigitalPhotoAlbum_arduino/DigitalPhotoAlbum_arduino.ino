@@ -17,7 +17,8 @@
 #define TFT_CS   6   // chip select line
 #define TFT_DC   7   // data/command line
 
-#define button   2  // button pin
+#define next_button   2  // button pin
+#define prev_button   3
 
 // initialize Adafruit ST7735 TFT library
 Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
@@ -27,12 +28,18 @@ void setup(void) {
 
   pinMode(TFT_CS, OUTPUT);
   digitalWrite(TFT_CS, HIGH);
-  pinMode(button, INPUT_PULLUP);
+  pinMode(next_button, INPUT_PULLUP);
+  pinMode(prev_button, INPUT_PULLUP);
 
   // initialize ST7735S TFT display
+  
   tft.initR(INITR_BLACKTAB);
-
+  
   tft.fillScreen(ST7735_BLUE);
+  tft.setTextColor(ST7735_WHITE);
+  tft.setTextSize(3);
+
+
 
   Serial.print("Initializing SD card...");
   if (!SD.begin()) {
@@ -49,13 +56,26 @@ void setup(void) {
 
 void loop() {
   File root = SD.open("/");  // open SD card main root
+  File entry =  root.openNextFile(); 
 
   while (true) {
-    File entry =  root.openNextFile();  // open file
+    //File entry =  root.openNextFile();  // open file
+     if (digitalRead(next_button) == LOW) {
+      
+      entry =   root.openNextFile();
+      Serial.println("next image is1  :" + String(entry.name()));
+    }
 
+    if (digitalRead(prev_button) == LOW) {
+      
+      entry = findPreviousFile(entry);
+      
+      Serial.println("previous image is2  :" + String(findPreviousFile(entry)));
+    }
+   
     if (! entry) {
       // no more files
-      root.close();
+      root.close(); 
       return;
     }
 
@@ -64,14 +84,22 @@ void loop() {
     char filename[13]; // Adjust the size based on your maximum filename length
 
   // Copy the file name into the character array
-      strcpy(filename, entry.name());
+    strcpy(filename, entry.name());
     if ( str1.equalsIgnoreCase(".bmp") )  // if the file has '.bmp' extension
       bmpDraw(filename, 0, 0);        // draw it
+
+      
+      tft.fillRect(0, 0, 80, 80, ST7735_GREEN);
+      tft.fillRect(120, 0, 80, 80, ST7735_RED);
+      tft.setCursor(8, 45);
+      tft.println("NEXT");
+      tft.setCursor(128, 45);
+      tft.println("BACK");
 
     entry.close();  // close the file
 
     delay(500);
-    while( digitalRead(button) ) ;  // wait for button press
+    while( digitalRead(next_button) && digitalRead(prev_button)) ;  // wait for button press
   }
 }
 
@@ -243,6 +271,32 @@ void printDirectory(File dir, int numTabs) {
     }
     entry.close();
   }
+}
+File findPreviousFile(File currentFile) {
+  File previous;
+  File root = SD.open("/");
+  root.rewindDirectory(); // Start from the beginning of the directory
+
+  File entry = root;
+  Serial.println("current file is:" + String(currentFile.name()));
+  while (true) {
+    
+    entry = root.openNextFile();
+    if (!entry) {
+      Serial.println("prev Image not found");
+      // No more files
+      break;
+    }
+    if (String(entry.name()) == String(currentFile.name())) {
+      // Found the current file, return previous file
+      Serial.println("prev Image  found1");
+      return previous;
+    }
+    
+    previous = entry; // Update previous file
+    Serial.println("previous file is: " + String(previous.name()));
+  }
+  return File(); // Return empty File if previous file not found
 }
 
 // end of code.
