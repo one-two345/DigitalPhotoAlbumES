@@ -1,131 +1,129 @@
-/*
- * Draw Bitmap images on ST7735 TFT display using Arduino.
- * The Arduino loads BMP format images from SD card and display
- *   them on the ST7735 TFT.
- * Reference: Adafruit spitftbitmap.ino example.
- * This is a free software with NO WARRANTY.
- * http://simple-circuit.com/
- */
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7735.h>
+#include <SPI.h>
+#include <SD.h>
 
-#include <Adafruit_GFX.h>    // include Adafruit graphics library
-#include <Adafruit_ST7735.h> // include Adafruit ST7735 display library
-#include <SPI.h>             // include Arduino SPI library
-#include <SD.h>              // include Arduino SD library
-
-// define ST7735 TFT display connections
-#define TFT_RST  5   // reset line (optional, pass -1 if not used)
-#define TFT_CS   6   // chip select line
-#define TFT_DC   7   // data/command line
-
-#define next_button   2  // button pin
+#define TFT_RST  5
+#define TFT_CS   6
+#define TFT_DC   7
+#define next_button   2
 #define prev_button   3
+#define auto_button   4
 
-// initialize Adafruit ST7735 TFT library
 Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
+
+bool autoMode = false;
+unsigned long lastStepTime = 0;
+unsigned long autoStepDelay = 1000;
+
+File root;
+File entry;
+File prevEntry;
 
 void setup(void) {
   Serial.begin(9600);
-
+  
   pinMode(TFT_CS, OUTPUT);
   digitalWrite(TFT_CS, HIGH);
   pinMode(next_button, INPUT_PULLUP);
   pinMode(prev_button, INPUT_PULLUP);
-
-  // initialize ST7735S TFT display
+  pinMode(auto_button, INPUT_PULLUP);
   
   tft.initR(INITR_BLACKTAB);
-  
   tft.fillScreen(ST7735_BLUE);
   tft.setTextColor(ST7735_WHITE);
   tft.setTextSize(3);
 
-
-
   Serial.print("Initializing SD card...");
   if (!SD.begin()) {
     Serial.println("failed!");
-    while(1);  // stay here
+    while(1);
   }
   Serial.println("OK!");
 
-  File root = SD.open("/");  // open SD card main root
-  printDirectory(root, 0);   // print all files names and sizes
-  root.close();              // close the opened root
 
+  root = SD.open("/");
+  entry = root.openNextFile(); // Open the first file in the root directory
+  printDirectory(root, 0);
+  Serial.println(String(entry.name()));
+  if (entry) {
+    displayImage(entry); // Display the first image
+  }
+  root.close();
 }
 
 void loop() {
-  File root = SD.open("/");  // open SD card main root
-  File entry =  root.openNextFile(); 
-
-  while (true) {
-    //File entry =  root.openNextFile();  // open file
-     if (digitalRead(next_button) == LOW) {
-      
-      entry =   root.openNextFile();
-      Serial.println("next image is1  :" + String(entry.name()));
-    }
-
-    if (digitalRead(prev_button) == LOW) {
-      
-      entry = findPreviousFile(entry);
-      
-      Serial.println("previous image is2  :" + String(findPreviousFile(entry)));
-    }
-   
-    if (! entry) {
-      // no more files
-      root.close(); 
-      return;
-    }
-
-    uint8_t nameSize = String(entry.name()).length();  // get file name size
-    String str1 = String(entry.name()).substring( nameSize - 4 );  // save the last 4 characters (file extension)
-    char filename[13]; // Adjust the size based on your maximum filename length
-
-  // Copy the file name into the character array
-    strcpy(filename, entry.name());
-    if ( str1.equalsIgnoreCase(".bmp") )  // if the file has '.bmp' extension
-      bmpDraw(filename, 0, 0);        // draw it
-
-      
-      tft.fillRect(0, 0, 80, 80, ST7735_GREEN);
-      tft.fillRect(120, 0, 80, 80, ST7735_RED);
-      tft.setCursor(8, 45);
-      tft.println("NEXT");
-      tft.setCursor(128, 45);
-      tft.println("BACK");
-
-    entry.close();  // close the file
-
-    delay(500);
-    while( digitalRead(next_button) && digitalRead(prev_button)) ;  // wait for button press
+  if (!root) {
+    root = SD.open("/");
+    root.rewindDirectory();
+    entry = root.openNextFile();
   }
+
+  if (digitalRead(next_button) == LOW) {
+    delay(200);
+    if (entry) entry.close();
+    entry = root.openNextFile();
+    if (!entry) {
+      root.rewindDirectory();
+      entry = root.openNextFile();
+    }
+    Serial.println("next image is: " + String(entry.name()));
+    displayImage(entry);
+    
+  }
+
+  if (digitalRead(prev_button) == LOW) {
+    delay(200);
+    if (entry) entry.close();
+    entry = findPreviousFile(entry);
+    Serial.println("previous image is: " + String(entry.name()));
+    displayImage(entry);
+  }
+  
+
+  if (digitalRead(auto_button) == LOW) {
+    delay(200);
+    autoMode = !autoMode;
+  }
+
+  if (autoMode && millis() - lastStepTime >= autoStepDelay) {
+    if (entry) entry.close();
+    entry = root.openNextFile();
+    if (!entry) {
+      root.rewindDirectory();
+      entry = root.openNextFile();
+    }
+    Serial.println("auto next image is: " + String(entry.name()));
+    displayImage(entry);
+    lastStepTime = millis();
+  }
+
+  delay(50);
 }
 
-// This function opens a Windows Bitmap (BMP) file and
-// displays it at the given coordinates.  It's sped up
-// by reading many pixels worth of data at a time
-// (rather than pixel by pixel).  Increasing the buffer
-// size takes more of the Arduino's precious RAM but
-// makes loading a little faster.  20 pixels seems a
-// good balance.
+void displayImage(File entry) {
+  if (!entry) return;
+  uint8_t nameSize = String(entry.name()).length();
+  String str1 = String(entry.name()).substring(nameSize - 4);
+  char filename[13];
 
+  strcpy(filename, entry.name());
+  if (str1.equalsIgnoreCase(".bmp") )
+    bmpDraw(filename, 0, 0);
+}
 #define BUFFPIXEL 20
-
 void bmpDraw(char *filename, uint8_t x, uint16_t y) {
-
-  File     bmpFile;
-  int      bmpWidth, bmpHeight;   // W+H in pixels
-  uint8_t  bmpDepth;              // Bit depth (currently must be 24)
-  uint32_t bmpImageoffset;        // Start of image data in file
-  uint32_t rowSize;               // Not always = bmpWidth; may have padding
-  uint8_t  sdbuffer[3*BUFFPIXEL]; // pixel buffer (R+G+B per pixel)
-  uint8_t  buffidx = sizeof(sdbuffer); // Current position in sdbuffer
-  boolean  goodBmp = false;       // Set to true on valid header parse
-  boolean  flip    = true;        // BMP is stored bottom-to-top
-  int      w, h, row, col;
-  uint8_t  r, g, b;
+  File bmpFile;
+  int bmpWidth, bmpHeight;
+  uint8_t bmpDepth;
+  uint32_t bmpImageoffset;
+  uint32_t rowSize;
+  uint8_t sdbuffer[3*BUFFPIXEL];
+  uint8_t buffidx = sizeof(sdbuffer);
+  boolean goodBmp = false;
+  boolean flip = true;
+  int w, h, row, col;
+  uint8_t r, g, b;
   uint32_t pos = 0, startTime = millis();
 
   if((x >= tft.width()) || (y >= tft.height())) return;
@@ -135,91 +133,64 @@ void bmpDraw(char *filename, uint8_t x, uint16_t y) {
   Serial.print(filename);
   Serial.println('\'');
 
-  // Open requested file on SD card
   if ((bmpFile = SD.open(filename)) == NULL) {
     Serial.print(F("File not found"));
     return;
   }
 
-  // Parse BMP header
-  if(read16(bmpFile) == 0x4D42) { // BMP signature
+  if(read16(bmpFile) == 0x4D42) {
     Serial.print(F("File size: ")); Serial.println(read32(bmpFile));
-    (void)read32(bmpFile); // Read & ignore creator bytes
-    bmpImageoffset = read32(bmpFile); // Start of image data
+    (void)read32(bmpFile);
+    bmpImageoffset = read32(bmpFile);
     Serial.print(F("Image Offset: ")); Serial.println(bmpImageoffset, DEC);
-    // Read DIB header
     Serial.print(F("Header size: ")); Serial.println(read32(bmpFile));
     bmpWidth  = read32(bmpFile);
     bmpHeight = read32(bmpFile);
-    if(read16(bmpFile) == 1) { // # planes -- must be '1'
-      bmpDepth = read16(bmpFile); // bits per pixel
+    if(read16(bmpFile) == 1) {
+      bmpDepth = read16(bmpFile);
       Serial.print(F("Bit Depth: ")); Serial.println(bmpDepth);
-      if((bmpDepth == 24) && (read32(bmpFile) == 0)) { // 0 = uncompressed
-
-        goodBmp = true; // Supported BMP format -- proceed!
+      if((bmpDepth == 24) && (read32(bmpFile) == 0)) {
+        goodBmp = true;
         Serial.print(F("Image size: "));
         Serial.print(bmpWidth);
         Serial.print('x');
         Serial.println(bmpHeight);
-
-        // BMP rows are padded (if needed) to 4-byte boundary
         rowSize = (bmpWidth * 3 + 3) & ~3;
-
-        // If bmpHeight is negative, image is in top-down order.
-        // This is not canon but has been observed in the wild.
         if(bmpHeight < 0) {
           bmpHeight = -bmpHeight;
-          flip      = false;
+          flip = false;
         }
-
-        // Crop area to be loaded
         w = bmpWidth;
         h = bmpHeight;
         if((x+w-1) >= tft.width())  w = tft.width()  - x;
         if((y+h-1) >= tft.height()) h = tft.height() - y;
-
-        // Set TFT address window to clipped image bounds
         tft.startWrite();
         tft.setAddrWindow(x, y, w, h);
-
-        for (row=0; row<h; row++) { // For each scanline...
-
-          // Seek to start of scan line.  It might seem labor-
-          // intensive to be doing this on every line, but this
-          // method covers a lot of gritty details like cropping
-          // and scanline padding.  Also, the seek only takes
-          // place if the file position actually needs to change
-          // (avoids a lot of cluster math in SD library).
-          if(flip) // Bitmap is stored bottom-to-top order (normal BMP)
-            pos = bmpImageoffset + (bmpHeight - 1 - row) * rowSize;
-          else     // Bitmap is stored top-to-bottom
-            pos = bmpImageoffset + row * rowSize;
-          if(bmpFile.position() != pos) { // Need seek?
+        for (row=0; row<h; row++) {
+          if(flip) pos = bmpImageoffset + (bmpHeight - 1 - row) * rowSize;
+          else     pos = bmpImageoffset + row * rowSize;
+          if(bmpFile.position() != pos) {
             tft.endWrite();
             bmpFile.seek(pos);
-            buffidx = sizeof(sdbuffer); // Force buffer reload
+            buffidx = sizeof(sdbuffer);
           }
-
-          for (col=0; col<w; col++) { // For each pixel...
-            // Time to read more pixel data?
-            if (buffidx >= sizeof(sdbuffer)) { // Indeed
+          for (col=0; col<w; col++) {
+            if (buffidx >= sizeof(sdbuffer)) {
               bmpFile.read(sdbuffer, sizeof(sdbuffer));
-              buffidx = 0; // Set index to beginning
+              buffidx = 0;
               tft.startWrite();
             }
-
-            // Convert pixel from BMP to TFT format, push to display
             b = sdbuffer[buffidx++];
             g = sdbuffer[buffidx++];
             r = sdbuffer[buffidx++];
             tft.pushColor(tft.Color565(r,g,b));
-          } // end pixel
-        } // end scanline
+          }
+        }
         tft.endWrite();
         Serial.print(F("Loaded in "));
         Serial.print(millis() - startTime);
         Serial.println(" ms");
-      } // end goodBmp
+      }
     }
   }
 
@@ -227,34 +198,26 @@ void bmpDraw(char *filename, uint8_t x, uint16_t y) {
   if(!goodBmp) Serial.println(F("BMP format not recognized."));
 }
 
-
-// These read 16- and 32-bit types from the SD card file.
-// BMP data is stored little-endian, Arduino is little-endian too.
-// May need to reverse subscript order if porting elsewhere.
-
 uint16_t read16(File f) {
   uint16_t result;
-  ((uint8_t *)&result)[0] = f.read(); // LSB
-  ((uint8_t *)&result)[1] = f.read(); // MSB
+  ((uint8_t *)&result)[0] = f.read();
+  ((uint8_t *)&result)[1] = f.read();
   return result;
 }
 
 uint32_t read32(File f) {
   uint32_t result;
-  ((uint8_t *)&result)[0] = f.read(); // LSB
+  ((uint8_t *)&result)[0] = f.read();
   ((uint8_t *)&result)[1] = f.read();
   ((uint8_t *)&result)[2] = f.read();
-  ((uint8_t *)&result)[3] = f.read(); // MSB
+  ((uint8_t *)&result)[3] = f.read();
   return result;
 }
 
-
 void printDirectory(File dir, int numTabs) {
   while (true) {
-
     File entry =  dir.openNextFile();
     if (! entry) {
-      // no more files
       break;
     }
     for (uint8_t i = 0; i < numTabs; i++) {
@@ -265,13 +228,13 @@ void printDirectory(File dir, int numTabs) {
       Serial.println("/");
       printDirectory(entry, numTabs + 1);
     } else {
-      // files have sizes, directories do not
       Serial.print("\t\t");
       Serial.println(entry.size(), DEC);
     }
     entry.close();
   }
 }
+
 File findPreviousFile(File currentFile) {
   File previous;
   File root = SD.open("/");
@@ -299,4 +262,3 @@ File findPreviousFile(File currentFile) {
   return File(); // Return empty File if previous file not found
 }
 
-// end of code.
